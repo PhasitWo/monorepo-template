@@ -1,0 +1,4 @@
+# Codex equivalent of `disable-model-invocation: true` in SKILL.md (Claude Code).
+# Codex runs this skill only when the user invokes it explicitly (`$<skill-name>`); keep both in sync.
+policy:
+  allow_implicit_invocation: false

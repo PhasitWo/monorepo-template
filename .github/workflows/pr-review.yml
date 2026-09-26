@@ -1,0 +1,89 @@
+# name: pr-review
+
+# on:
+#   pull_request:
+#     types: [labeled]
+#   issues:
+#     types: [labeled]
+
+# # Only run when a pull request is labeled with "ai-pr-review".
+# jobs:
+#   pr-review:
+#     if: >
+#       github.event.label.name == 'ai-pr-review' &&
+#       (
+#         github.event_name == 'pull_request' ||
+#         (github.event_name == 'issues' && github.event.issue.pull_request != null)
+#       )
+#     runs-on: ubuntu-latest
+#     permissions:
+#       contents: read # read-only checkout — opencode must not push code
+#       pull-requests: write # allow posting review comments + managing labels
+#       issues: write
+#     env:
+#       PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+#       REPO: ${{ github.repository }}
+#     steps:
+#       - name: Swap labels to "doing" (before running OpenCode)
+#         env:
+#           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#           PR_NUMBER: ${{ env.PR_NUMBER }}
+#           REPO: ${{ env.REPO }}
+#         run: |
+#           gh pr edit "$PR_NUMBER" --repo "$REPO" \
+#             --remove-label "ai-pr-review" \
+#             --add-label "ai-pr-review-doing"
+
+#       - name: Checkout repository
+#         uses: actions/checkout@v6
+#         with:
+#           fetch-depth: 1
+#           persist-credentials: true
+
+#       - name: Run OpenCode
+#         uses: anomalyco/opencode/github@latest
+#         env:
+#           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+#           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#         with:
+#           model: ${{ vars.OPENCODE_MODEL || 'minimax/minimax-m3:free' }}
+#           use_github_token: true
+#           prompt: |
+#             ## Action
+#             - **Announce yourself.** Print a greeting that naturally mentions the model you are running on. Do not use static text — speak in your own voice.
+#             - Outsider-perspective review of a plan, PR, or code change.
+#             ## Constraints (must follow)
+#             - You may ONLY post a review comment on the pull request. Do NOT modify,
+#               create, or delete any files, and do NOT push commits or open PRs.
+#               Your only output is a single PR comment containing the review.
+#             ## Report
+#             Output one tight section per finding. Order by severity (blocker → major → nit). For each:
+#             - **Finding** — one sentence, specific. Cite `file:line` when applicable.
+#             - **Why it matters** — the consequence, not the principle.
+#             - **Suggested change** — concrete, minimal.
+#             ## Operating rules
+#             - **No rubber-stamps.** "LGTM" is not an output. If you genuinely find nothing, say what you traced and what you checked, so the user can judge whether your review covered the surface they cared about.
+#             - **Cite or it didn't happen.** Every claim about the code references a specific path, file, or line. No vague "this might break under load."
+#             - **Distinguish claim from verification.** "The PR says X" and "I traced X and confirmed / refuted it" are different — keep them separate in the output.
+#             - **No flattery, no hedging.** "This is a great PR but..." adds nothing. State the finding.
+
+#       - name: Swap labels to "done" (on success)
+#         env:
+#           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#           PR_NUMBER: ${{ env.PR_NUMBER }}
+#           REPO: ${{ env.REPO }}
+#         run: |
+#           gh pr edit "$PR_NUMBER" --repo "$REPO" \
+#             --remove-label "ai-pr-review-doing" \
+#             --add-label "ai-pr-review-done"
+
+#       - name: Mark error label (on failure)
+#         if: failure()
+#         env:
+#           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#           PR_NUMBER: ${{ env.PR_NUMBER }}
+#           REPO: ${{ env.REPO }}
+#         run: |
+#           gh pr edit "$PR_NUMBER" --repo "$REPO" \
+#             --remove-label "ai-pr-review-doing" \
+#             --add-label "ai-pr-review-error"

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "incremental": false,
+    "isolatedModules": true,
+    "module": "commonjs",
+    "moduleDetection": "force",
+    "noUncheckedIndexedAccess": true,
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2022",
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "./dist",
+    "declaration": true
+  }
+}

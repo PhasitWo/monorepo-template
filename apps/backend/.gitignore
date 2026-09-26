@@ -1,0 +1,19 @@
+.vscode
+.DS_Store
+/diagrams
+dist
+node_modules
+ralph
+# Keep environment variables out of version control
+.env
+
+src/.generated
+
+# Test artifacts
+coverage
+*.log
+.turbo
+
+# Build artifacts
+*.tsbuildinfo
+junit.xml

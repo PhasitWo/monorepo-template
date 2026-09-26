@@ -1,0 +1,92 @@
+// Prisma schema — https://pris.ly/d/prisma-schema
+// No @map / @@map: tables and columns are the model and field names verbatim, so raw SQL quotes them
+// ("RunningNumber", "createdAt"). See .agents/skills/prisma-raw-query/SKILL.md.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/.generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String         @id @default(uuid()) @db.Uuid
+  username      String         @unique
+  name          String
+  password      String
+  createdAt     DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime       @updatedAt @db.Timestamptz(6)
+  deletedAt     DateTime?      @db.Timestamptz(6)
+  refreshTokens RefreshToken[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  token     String   @unique
+  userId    String   @db.Uuid
+  expiresAt DateTime @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+// Example domain: the smallest complete slice (route → controller → use case → entity → repository → DTO → page).
+// Copy it when adding a new domain, then delete it if you don't need tags.
+model Tag {
+  id          String   @id @default(uuid()) @db.Uuid
+  runningId   Int      @unique @default(0)
+  runningCode String   @default("") // auto generated
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+}
+
+enum RunningNumberScope {
+  TAG
+}
+
+// Last issued running number per scope. Allocation bumps the row inside the caller's transaction,
+// so the row lock serializes concurrent creates in the same scope and a rollback releases the number.
+model RunningNumber {
+  scope RunningNumberScope
+  key   String // '' for global scopes; a parent id (e.g. tenantId) for scopes numbered per parent
+  value Int
+
+  @@id([scope, key])
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN_SUCCESS
+  LOGIN_FAILURE
+  TOKEN_REFRESH
+}
+
+enum AuditEntityType {
+  USER
+  TAG
+}
+
+model AuditLog {
+  id            String           @id @default(uuid()) @db.Uuid
+  createdAt     DateTime         @default(now()) @db.Timestamptz(6)
+  action        AuditAction
+  entityType    AuditEntityType? // null only for LOGIN_FAILURE with unknown user
+  entityId      String?          @db.Uuid
+  diff          Json? // { field: [old, new] }
+  metadata      Json? // e.g. { reason: "INVALID_PASSWORD" }
+  actorUserId   String?          @db.Uuid // no FK: survives user deletion, null for failed login
+  actorUsername String? // snapshot; attempted username on LOGIN_FAILURE
+  ip            String?
+  userAgent     String?
+  requestId     String?
+
+  @@index([entityType, entityId])
+  @@index([actorUserId])
+  @@index([createdAt])
+}
