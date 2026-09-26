@@ -43,6 +43,35 @@ const processQueue = (error: unknown, token: string | null = null): void => {
   failedQueue = [];
 };
 
+// Tabs share localStorage, and a refresh token works only once, so tabs take turns refreshing.
+// Without a secure context navigator.locks is missing and each tab refreshes on its own.
+const withRefreshLock = <T>(task: () => Promise<T>): Promise<T> =>
+  navigator.locks ? navigator.locks.request('auth-refresh', task) : task();
+
+/** Returns a fresh access token, reusing one another tab (or an earlier refresh) already stored. */
+const refreshAccessToken = (staleAccessToken: string | undefined): Promise<string> =>
+  withRefreshLock(async () => {
+    const storedAccessToken = localStorage.getItem(STORAGE_KEY.ACCESS_TOKEN);
+    if (storedAccessToken && storedAccessToken !== staleAccessToken) {
+      return storedAccessToken;
+    }
+
+    // Use standard axios here to avoid the interceptor loop
+    const resp = await axios.post<SuccessResponse<TokenResponse>>(
+      `${import.meta.env.VITE_API_BASE_URL}/auth/refresh`,
+      { refreshToken: localStorage.getItem(STORAGE_KEY.REFRESH_TOKEN) },
+      { timeout: 15_000 },
+    );
+    const { accessToken, refreshToken } = resp.data.data;
+    localStorage.setItem(STORAGE_KEY.ACCESS_TOKEN, accessToken);
+    localStorage.setItem(STORAGE_KEY.REFRESH_TOKEN, refreshToken);
+    return accessToken;
+  });
+
+// Only a rejected refresh token ends the session; network errors and 5xx leave it for the next try
+const isSessionRejected = (err: unknown): boolean =>
+  isAxiosError(err) && (err.response?.status === 400 || err.response?.status === 401);
+
 // Response Interceptor
 axiosInstance.interceptors.response.use(
   (response: AxiosResponse): AxiosResponse => response,
@@ -53,65 +82,36 @@ axiosInstance.interceptors.response.use(
     // Refresh on 401 once per request; auth endpoints are excluded so a wrong password surfaces as an error
     const isAuthRequest = originalRequest?.url?.startsWith('/auth/');
     if (error.response?.status === 401 && originalRequest && !originalRequest._retry && !isAuthRequest) {
+      // Mark this request so we don't accidentally loop it if the replay fails again
+      originalRequest._retry = true;
+
       // If a refresh is already happening, queue this request up and wait
       if (isRefreshing) {
         return new Promise<string>((resolve, reject) => {
           failedQueue.push({ resolve, reject });
-        })
-          .then((token: string) => {
-            if (originalRequest.headers) {
-              originalRequest.headers.Authorization = `Bearer ${token}`;
-            }
-            return axiosInstance(originalRequest); // Replay original request
-          })
-          .catch((err: unknown) => Promise.reject(err));
+        }).then(() => axiosInstance(originalRequest)); // Replay; the request interceptor adds the new token
       }
 
-      // Mark this request so we don't accidentally loop it if the refresh fails
-      originalRequest._retry = true;
       isRefreshing = true;
+      const staleAccessToken = String(originalRequest.headers?.Authorization ?? '').replace(/^Bearer /, '');
 
-      return new Promise((resolve, reject) => {
-        // Use standard axios here to avoid the interceptor loop
-        axios
-          .post<SuccessResponse<TokenResponse>>(`${import.meta.env.VITE_API_BASE_URL}/auth/refresh`, {
-            refreshToken: localStorage.getItem(STORAGE_KEY.REFRESH_TOKEN),
-          })
-          .then((resp) => {
-            const { accessToken, refreshToken } = resp.data.data;
-
-            // Store new tokens
-            localStorage.setItem(STORAGE_KEY.ACCESS_TOKEN, accessToken);
-            localStorage.setItem(STORAGE_KEY.REFRESH_TOKEN, refreshToken);
-
-            // Update default headers for future requests
-            axiosInstance.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
-
-            // Update the original failed request header
-            if (originalRequest.headers) {
-              originalRequest.headers.Authorization = `Bearer ${accessToken}`;
-            }
-
-            // Resolve everything in the waiting line
-            processQueue(null, accessToken);
-
-            // Replay the original request that failed
-            resolve(axiosInstance(originalRequest));
-          })
-          .catch((refreshError: unknown) => {
-            processQueue(refreshError, null);
-
-            clearSession();
-            // HashRouter: reload so the app restarts on the login route with no session
-            window.location.hash = '#/login';
-            window.location.reload();
-
-            reject(refreshError);
-          })
-          .finally(() => {
-            isRefreshing = false;
-          });
-      });
+      try {
+        const accessToken = await refreshAccessToken(staleAccessToken || undefined);
+        // Resolve everything in the waiting line, then replay the original request that failed
+        processQueue(null, accessToken);
+        return axiosInstance(originalRequest);
+      } catch (refreshError: unknown) {
+        processQueue(refreshError, null);
+        if (isSessionRejected(refreshError)) {
+          clearSession();
+          // HashRouter: reload so the app restarts on the login route with no session
+          window.location.hash = '#/login';
+          window.location.reload();
+        }
+        throw refreshError;
+      } finally {
+        isRefreshing = false;
+      }
     }
 
     return Promise.reject(error);

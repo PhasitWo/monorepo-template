@@ -77,7 +77,11 @@ export class AuthService extends BaseService {
 
     // rotation + audit in one transaction; a missing user returns null (not throw) so the old token stays deleted
     const result = await this.unitOfWork.execute(async () => {
-      await this.prisma.refreshToken.deleteMany({ where: { token: data.refreshToken } });
+      // the delete is the claim: a concurrent refresh with the same token waits on the row lock, then deletes nothing
+      const { count } = await this.prisma.refreshToken.deleteMany({ where: { token: data.refreshToken } });
+      if (count === 0) {
+        throw new UnauthorizedError('Refresh token not found');
+      }
 
       const user = await this.userService.findById(payload.userId);
       if (!user) {

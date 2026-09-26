@@ -147,6 +147,7 @@ describe('AuthService', () => {
 
     it('rotates the token and records TOKEN_REFRESH', async () => {
       db.refreshToken.findUnique.mockResolvedValue(stored(new Date(Date.now() + 60_000)));
+      db.refreshToken.deleteMany.mockResolvedValue({ count: 1 });
       userService.findById.mockResolvedValue(user);
 
       const result = await service.refresh({ refreshToken: token });
@@ -186,8 +187,19 @@ describe('AuthService', () => {
       expect(auditLogService.record).not.toHaveBeenCalled();
     });
 
+    it('token already rotated by a concurrent refresh throws and issues nothing', async () => {
+      db.refreshToken.findUnique.mockResolvedValue(stored(new Date(Date.now() + 60_000)));
+      db.refreshToken.deleteMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.refresh({ refreshToken: token })).rejects.toThrow('Refresh token not found');
+      expect(userService.findById).not.toHaveBeenCalled();
+      expect(db.refreshToken.create).not.toHaveBeenCalled();
+      expect(auditLogService.record).not.toHaveBeenCalled();
+    });
+
     it('missing user throws after the old token is deleted, with no audit row', async () => {
       db.refreshToken.findUnique.mockResolvedValue(stored(new Date(Date.now() + 60_000)));
+      db.refreshToken.deleteMany.mockResolvedValue({ count: 1 });
       userService.findById.mockResolvedValue(null);
 
       await expect(service.refresh({ refreshToken: token })).rejects.toThrow('User not found');
